@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-dotenv
+httpx
+anthropic
+asyncpg
+pymongo
+reportlab
+matplotlib
+fpdf2

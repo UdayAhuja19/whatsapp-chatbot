@@ -1,0 +1,10 @@
+make the api actually work
+have just last 20 lines of prompt memory
+put pdfs, images and voice functionality
+
+
+
+make the waitlist SYSTEM
+make worksheets, questions for topic recognized in the doubt/image
+- [x] say the wait one moment message with less latency
+
