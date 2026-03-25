@@ -10,6 +10,7 @@ import os
 import re
 import tempfile
 from io import BytesIO
+from typing import Optional
 
 import matplotlib
 matplotlib.use("Agg")  # Non-interactive backend — no GUI needed
@@ -46,7 +47,7 @@ WHITE        = HexColor("#FFFFFF")
 PAGE_W, PAGE_H = A4                  # 210 x 297 mm
 MARGIN_LEFT   = 20 * mm
 MARGIN_RIGHT  = 20 * mm
-MARGIN_TOP    = 28 * mm              # Room for 2-line header bar
+MARGIN_TOP    = 30 * mm              # Room for graphical header bar
 MARGIN_BOTTOM = 22 * mm              # Room for footer
 
 
@@ -181,7 +182,7 @@ _reusable_fig, _reusable_ax = plt.subplots(figsize=(6, 0.8))
 _reusable_ax.axis("off")
 
 
-def _render_latex(latex_str: str, fontsize: int = 12, display: bool = True) -> Image | None:
+def _render_latex(latex_str: str, fontsize: int = 12, display: bool = True) -> Optional[Image]:
     """
     Render a LaTeX math string to a PNG in memory using matplotlib,
     then return a ReportLab Image flowable that fits within page margins.
@@ -561,29 +562,65 @@ def _draw_header(canvas, doc):
     """Draw a centered branded header bar with 4 text lines at the top of every page."""
     canvas.saveState()
 
-    header_height = 14 * mm
+    header_height = 17 * mm
+    top_y = PAGE_H
 
     # Blue accent bar at very top
     canvas.setFillColor(PRIMARY)
-    canvas.rect(0, PAGE_H - header_height, PAGE_W, header_height, fill=True, stroke=False)
+    canvas.rect(0, top_y - header_height, PAGE_W, header_height, fill=True, stroke=False)
     
-    # Calculate y positions for the 2 text lines
-    font_size = 11
-    line_spacing = font_size + 4  # e.g., 15 points
-    y1 = PAGE_H - 6 * mm
-    y2 = y1 - line_spacing
-
+    # ----- 1. Chat Icon (Left side) -----
+    icon_x = MARGIN_LEFT
+    bubble_w = 8.5 * mm
+    bubble_h = 6.5 * mm
+    bubble_x = icon_x
+    bubble_y = top_y - 11.5 * mm
+    
+    # Chat bubble background
+    canvas.setFillColor(ACCENT)
+    canvas.roundRect(bubble_x, bubble_y, bubble_w, bubble_h, radius=1.5*mm, fill=True, stroke=False)
+    
+    # Chat bubble tail (triangle pointing down-left)
+    p = canvas.beginPath()
+    p.moveTo(bubble_x + 1.5*mm, bubble_y)
+    p.lineTo(bubble_x + 1.5*mm, bubble_y - 2*mm)
+    p.lineTo(bubble_x + 3.5*mm, bubble_y + 0.5*mm)
+    canvas.drawPath(p, fill=True, stroke=False)
+    
+    # White dots inside the bubble
     canvas.setFillColor(WHITE)
-    
-    # First line: Company Name (Left), Names (Right)
-    canvas.setFont("Helvetica-Bold", font_size)
-    canvas.drawString(MARGIN_LEFT, y1, "TANVIKA LLC")
-    canvas.setFont("Helvetica", font_size)
-    canvas.drawRightString(PAGE_W - MARGIN_RIGHT, y1, "Devika | Tanmay")
+    dot_y = bubble_y + 3.25 * mm
+    canvas.circle(bubble_x + 2.5*mm, dot_y, 0.6*mm, fill=True, stroke=False)
+    canvas.circle(bubble_x + 4.25*mm, dot_y, 0.6*mm, fill=True, stroke=False)
+    canvas.circle(bubble_x + 6.0*mm, dot_y, 0.6*mm, fill=True, stroke=False)
 
-    # Second line: Tagline (Left), Phone Numbers (Right)
-    canvas.drawString(MARGIN_LEFT, y2, "Premium Educators in the Middle East")
-    canvas.drawRightString(PAGE_W - MARGIN_RIGHT, y2, "+971-547926634 | +91-7838743854")
+    # ----- 2. EduBot Typography -----
+    text_x = bubble_x + bubble_w + 3.5 * mm
+    
+    # Main Title
+    canvas.setFillColor(WHITE)
+    canvas.setFont("Helvetica-Bold", 16)
+    canvas.drawString(text_x, top_y - 8.5 * mm, "EduBot")
+    
+    # Subtitle
+    canvas.setFont("Helvetica", 9)
+    canvas.setFillColor(HexColor("#E2E8F0")) # Slightly dimmed white/light gray
+    canvas.drawString(text_x, top_y - 13.5 * mm, "AI-powered study companion")
+
+    # ----- 3. WhatsApp Bot Pill (Right side) -----
+    pill_w = 26 * mm
+    pill_h = 6.5 * mm
+    pill_x = PAGE_W - MARGIN_RIGHT - pill_w
+    pill_y = top_y - 12 * mm
+    
+    # Pill background
+    canvas.setFillColor(ACCENT)
+    canvas.roundRect(pill_x, pill_y, pill_w, pill_h, radius=3.25*mm, fill=True, stroke=False)
+    
+    # Pill text
+    canvas.setFillColor(WHITE)
+    canvas.setFont("Helvetica-Bold", 8.5)
+    canvas.drawCentredString(pill_x + pill_w/2, pill_y + 2.0*mm, "WhatsApp Bot")
 
     canvas.restoreState()
 

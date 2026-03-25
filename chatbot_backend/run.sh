@@ -6,12 +6,16 @@ echo "======================================"
 
 # Kill any process already using port 8000 to avoid [Errno 48] (macOS compatible)
 echo "-> Clearing port 8000 if busy..."
+# Try macOS lsof first
 PIDS=$(lsof -t -i:8000 2>/dev/null)
 if [ -n "$PIDS" ]; then
   echo "   Found stuck process(es): $PIDS — killing them..."
   kill -9 $PIDS 2>/dev/null
-  sleep 1
+else
+  # Fallback for Linux/EC2 without lsof
+  fuser -k 8000/tcp 2>/dev/null
 fi
+sleep 1
 
 # Activate the virtual environment
 source venv/bin/activate

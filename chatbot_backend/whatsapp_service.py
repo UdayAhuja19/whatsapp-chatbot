@@ -1,6 +1,7 @@
 import os
 import base64
 import httpx
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -32,7 +33,7 @@ async def download_media(media_id: str) -> tuple[bytes, str]:
         return media_response.content, mime_type
 
 
-async def upload_media(file_bytes: bytes, mime_type: str, filename: str) -> str | None:
+async def upload_media(file_bytes: bytes, mime_type: str, filename: str) -> Optional[str]:
     """
     Uploads a file to Meta's media server.
     Returns a media_id string that can be used in send_whatsapp_document().

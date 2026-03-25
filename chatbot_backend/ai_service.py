@@ -15,9 +15,10 @@ client = AsyncAnthropic(
 
 # Used for normal WhatsApp text replies — no LaTeX, no markdown symbols
 SYSTEM_PROMPT_PLAIN = """
-You are a helpful educational assistant for students.
+You are a helpful educational assistant for high school students.
 CRITICAL RULE: You can ONLY be used for academic purposes. If the user asks a question that is not related to academics, education, or studying, you must politely decline and state that you are only for academic purposes.
 CRITICAL RULE 2: You can ONLY communicate in English. If the user asks a question in any other language, politely respond in English that you can only be used in English.
+Target your explanations, vocabulary, and difficulty strictly at the level of a high school student (grades 9-12).
 Answer questions clearly and accurately using plain text only.
 For math, write equations as readable text (e.g. "x^2 + 3x + 2" or "sin(x)") — NO LaTeX, NO dollar signs, NO backslashes.
 Keep responses concise as they will be read on a phone screen.
@@ -28,7 +29,8 @@ DO NOT add this sentence if you are declining a non-academic query.
 
 # Used only when generating PDF documents — LaTeX is rendered beautifully in the PDF
 SYSTEM_PROMPT_PDF = """
-You are an educational assistant. Answer student questions and generate study materials (like practice worksheets) clearly and accurately.
+You are an educational assistant tailoring content for high school students. Answer student questions and generate study materials (like practice worksheets) clearly and accurately.
+TARGET AUDIENCE: Target your explanations, vocabulary, and difficulty strictly at the level of a high school student (grades 9-12).
 CRITICAL RULE: You can ONLY be used for academic purposes. If the user asks a question that is not related to academics, education, or studying, politely decline and state your purpose.
 CRITICAL RULE 2: You can ONLY communicate in English. If the user asks a question in any other language, politely respond in English that you can only be used in English.
 The system will AUTOMATICALLY convert your text response into a formatted PDF document.
@@ -120,3 +122,53 @@ async def generate_response(chat_history: list, new_message: str, media_bytes: b
     except Exception as e:
         print(f"Error calling Claude API: {e}")
         return "I'm sorry, I am currently experiencing technical difficulties. Please try again later."
+
+
+async def decide_pdf_intent(chat_history: list, new_message: str) -> str:
+    """
+    Uses Claude to determine if a PDF should be generated, and what type.
+    Returns a string in the format "INTENT|Topic" 
+    e.g. "PDF_SOLUTION|Agriculture Methane Emissions"
+    or "NONE|None".
+    """
+    system_prompt = (
+        "You are an intent classification engine for an educational WhatsApp bot. "
+        "Analyze the user's latest message combined with the chat history. "
+        "Determine if the user wants an academic PDF document generated AND identify the specific academic topic they are referring to. "
+        "Your output MUST be strictly in the format: INTENT|Topic Name\n\n"
+        "INTENT must be EXACTLY ONE of the following:\n"
+        "1. FOLLOW_UP_WORKSHEET (if the bot previously offered practice questions and the user accepted, agreed, or requested specific alterations to the practice)\n"
+        "2. PDF_WORKSHEET (if the user explicitly asks to generate a worksheet)\n"
+        "3. PDF_QUESTION_PAPER (if the user explicitly asks for a test or question paper)\n"
+        "4. PDF_SOLUTION (if the user explicitly asks for notes, summary, or a structured solution in a PDF document. "
+        "If the user just says 'in a pdf format please', look at the previous conversation to determine the topic!)\n"
+        "5. NONE (if the user is just chatting normally, asking a question to be answered in chat, declining an offer, or if a PDF is not strictly necessary)\n\n"
+        "The Topic Name should be 2-5 words summarizing the core academic subject. Do not include conversational words like 'please' or 'worksheet'. If INTENT is NONE, the Topic Name can just be None."
+    )
+    
+    # We only need the last few messages for context to save tokens and inference time
+    recent_history = [
+        {"role": m["role"], "content": m["content"]}
+        for m in chat_history[-4:] if isinstance(m.get("content"), str)
+    ]
+    
+    messages = recent_history + [{"role": "user", "content": new_message}]
+    
+    try:
+        response = await client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=30,
+            temperature=0.0,
+            system=system_prompt,
+            messages=messages
+        )
+        result = response.content[0].text.strip()
+        
+        # Parse the output safely
+        for tag in ["FOLLOW_UP_WORKSHEET", "PDF_WORKSHEET", "PDF_QUESTION_PAPER", "PDF_SOLUTION"]:
+            if result.upper().startswith(tag):
+                return result
+        return "NONE|None"
+    except Exception as e:
+        print(f"Error in intent classification: {e}")
+        return "NONE|None"

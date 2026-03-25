@@ -22,16 +22,7 @@ processing_locks = set()
 seen_message_ids = set()
 
 # Keywords that trigger sending a PDF document instead of (or in addition to) plain text
-PDF_TRIGGER_KEYWORDS = [
-    "pdf", "notes", "study guide", "summarize", "summary", "revision",
-    "cheat sheet", "document", "write up", "worksheet", "question paper",
-    "answer key", "more questions", "practice", "test paper"
-]
-
-def wants_pdf_response(text: str) -> bool:
-    """Returns True if the student's message suggests they want a PDF."""
-    lower = text.lower()
-    return any(kw in lower for kw in PDF_TRIGGER_KEYWORDS)
+# (Now handled by ai_service.decide_pdf_intent)
 
 def extract_title(text: str) -> str:
     """Extract a short title from the student's message for the PDF filename."""
@@ -72,72 +63,80 @@ async def process_message(sender_phone: str, text_body: str, message_type: str,
         # 1. Retrieve Memory
         history = database.get_chat_history(sender_phone, limit=10)
 
-        # 2. Detect if the student wants a PDF output
-        send_pdf = wants_pdf_response(text_body)
+        # 2. Detect if the student wants a PDF output (Pre-flight AI check)
+        pdf_intent_raw = await ai_service.decide_pdf_intent(history, text_body)
+        
+        if "|" in pdf_intent_raw:
+            pdf_intent, inferred_topic = pdf_intent_raw.split("|", 1)
+        else:
+            pdf_intent = pdf_intent_raw
+            inferred_topic = "Attached Content"
+            
+        pdf_intent = pdf_intent.strip().upper()
+        inferred_topic = inferred_topic.strip()
+        
+        send_pdf = pdf_intent != "NONE"
         
         ai_prompt = text_body
         document_type = "Solution"
-        base_topic = extract_title(text_body if text_body else "Attached Content")
+        base_topic = extract_title(inferred_topic) if inferred_topic and inferred_topic.lower() != "none" else extract_title("Attached Content")
 
-        # ── Check if they are saying "yes" to a worksheet offer ──
-        positive_phrases = ["yes", "yeah", "yep", "yup", "sure", "ok", "okay", "please", "do it", "of course", "definitely", "why not", "go ahead", "sounds good", "perfect", "y"]
-        user_reply = text_body.strip().lower()
-        is_affirmative = user_reply in positive_phrases or any(user_reply.startswith(p + " ") or user_reply.startswith(p + ".") for p in positive_phrases)
-        if is_affirmative and history:
-            # Look at the last message from the assistant
-            last_bot_msg = next((msg["content"] for msg in reversed(history) if msg["role"] == "assistant"), "")
-            if "practice worksheet" in last_bot_msg.lower() or "practice questions" in last_bot_msg.lower() or "practice" in last_bot_msg.lower():
-                send_pdf = True
-                document_type = "Worksheet"
-                
-                # Extract the actual topic from the user's PREVIOUS message
+        if pdf_intent == "FOLLOW_UP_WORKSHEET":
+            document_type = "Worksheet"
+            
+            # Use AI inferred topic if it found one, otherwise fallback to previous message
+            if base_topic == "Attached Content" or base_topic == "Practice":
                 last_user_msg = next((msg["content"] for msg in reversed(history) if msg["role"] == "user" and msg["content"]), "")
-                if last_user_msg and last_user_msg.lower() not in positive_phrases:
-                    base_topic = extract_title(last_user_msg)
-                else:
-                    base_topic = "Practice"
+                base_topic = extract_title(last_user_msg) if last_user_msg else "Practice"
 
-                ai_prompt = (
-                    "Please generate a practice worksheet based strictly on ALL the academic topics and concepts covered in our last conversation (including any attached images). "
-                    "Extract EVERY SINGLE subject or concept discussed. For EACH topic/concept you find, you MUST generate exactly 2 questions. "
-                    "For example, if we discussed 1 topic, generate 2 questions. If we discussed 3 topics, generate 6 questions. "
-                    "Group and categorize the questions properly under clear subheadings for each topic. "
-                    "This could be math, science, history, languages, or any other subject. "
-                    "Make the difficulty similar to the concepts we just discussed. "
-                    "LIST ALL THE CATEGORIZED QUESTIONS FIRST. "
-                    "Then, include the solutions at the very end of the document on a new page (use a level 1 heading EXACTLY like '# Answer Key'). "
-                    "Use clear headings, bullet points, and LaTeX math formatting ONLY IF the subject requires math. "
-                    "Do NOT include any conversational text, just the worksheet and the answer key."
-                )
-
-        if send_pdf and ai_prompt == text_body:
-            # When a normal PDF is requested (not the auto-worksheet trigger above)
-            topic = text_body if text_body else "the attached content"
-            if "question paper" in text_body.lower() or "test paper" in text_body.lower():
-                document_type = "Question Paper"
-                ai_prompt = (
-                    f"Please generate a question paper for: {topic}. "
-                    f"List the questions clearly using bullet points and LaTeX math formatting where appropriate. "
-                    f"DO NOT include an answer key or solutions in this document. "
-                    f"Do NOT include any conversational text, just the questions."
-                )
-            elif "worksheet" in text_body.lower():
-                document_type = "Worksheet"
-                ai_prompt = (
-                    f"Please generate a worksheet for: {topic}. "
-                    f"LIST ALL THE QUESTIONS FIRST clearly using bullet points and LaTeX math formatting. "
-                    f"Then, include the solutions at the very end of the document on a new page (use a level 1 heading EXACTLY like '# Answer Key'). "
-                    f"Do NOT include any conversational text, just the worksheet and the answer key."
-                )
-            else:
-                document_type = "Solution"
-                ai_prompt = (
-                    f"Please provide a complete, well-structured, and detailed educational solution/explanation for: {topic}. "
-                    f"Solve the FULL problem and all of its sub-parts step-by-step. "
-                    f"Use clear headings (using # symbols), bullet points, and LaTeX math formatting where appropriate for clarity. "
-                    f"Do NOT include any conversational text, pleasantries, or offers to help further. Do NOT mention being an assistant, do NOT mention PDFs — "
-                    f"just provide the full academic content and nothing else."
-                )
+            ai_prompt = (
+                "Please generate a practice worksheet based strictly on ALL the academic topics and concepts covered in our last conversation (including any attached images). "
+                f"The inferred core topic from the conversation is: '{inferred_topic}'. "
+                "Extract EVERY SINGLE subject or concept discussed. For EACH topic/concept you find, you MUST generate exactly 2 questions. "
+                "For example, if we discussed 1 topic, generate 2 questions. If we discussed 3 topics, generate 6 questions. "
+                "Group and categorize the questions properly under clear subheadings for each topic. "
+                "This could be math, science, history, languages, or any other subject. "
+                "Make the difficulty similar to the concepts we just discussed. "
+                "LIST ALL THE CATEGORIZED QUESTIONS FIRST. "
+                "Then, include the solutions at the very end of the document on a new page (use a level 1 heading EXACTLY like '# Answer Key'). "
+                "Use clear headings, bullet points, and LaTeX math formatting ONLY IF the subject requires math. "
+                "Do NOT include any conversational text, just the worksheet and the answer key."
+            )
+        elif pdf_intent == "PDF_QUESTION_PAPER":
+            document_type = "Question Paper"
+            ai_prompt = (
+                f"The user has made the following request: '{text_body}'\n\n"
+                f"They want a Question Paper generated based on this request. "
+                f"The inferred core topic from the conversation is: '{inferred_topic}'. "
+                f"Use the chat history context to ensure you cover the right material. "
+                f"List the questions clearly using bullet points and LaTeX math formatting where appropriate. "
+                f"DO NOT include an answer key or solutions in this document. "
+                f"Do NOT include any conversational text, just the questions."
+            )
+        elif pdf_intent == "PDF_WORKSHEET":
+            document_type = "Worksheet"
+            ai_prompt = (
+                f"The user has made the following request: '{text_body}'\n\n"
+                f"They want a Worksheet generated based on this request. "
+                f"The inferred core topic from the conversation is: '{inferred_topic}'. "
+                f"Use the chat history context to ensure you cover the right material. "
+                f"LIST ALL THE QUESTIONS FIRST clearly using bullet points and LaTeX math formatting. "
+                f"Then, include the solutions at the very end of the document on a new page (use a level 1 heading EXACTLY like '# Answer Key'). "
+                f"Do NOT include any conversational text, just the worksheet and the answer key."
+            )
+        elif pdf_intent == "PDF_SOLUTION":
+            document_type = "Solution"
+            ai_prompt = (
+                f"The user has made the following request: '{text_body}'\n\n"
+                f"They want an educational PDF document/solution generated based on their request. "
+                f"The inferred core topic from the conversation is: '{inferred_topic}'. "
+                f"Use the chat history context to extract the specific details they want summarized or solved. "
+                f"Please provide a complete, well-structured, and detailed educational solution/explanation. "
+                f"Solve the FULL problem and all of its sub-parts step-by-step if applicable. "
+                f"Use clear headings (using # symbols), bullet points, and LaTeX math formatting where appropriate for clarity. "
+                f"Do NOT include any conversational text, pleasantries, or offers to help further. Do NOT mention being an assistant, do NOT mention PDFs — "
+                f"just provide the full academic content and nothing else."
+            )
 
         pdf_title = f"{base_topic} {document_type}".strip()
 
